@@ -103,7 +103,7 @@ class GFNAgent():
         """
         batch_size = batch_of_positions.shape[0]
         # Check that we're not up against the edge of the environment
-        action_mask = batch_of_positions < (self.env_len - 1)
+        action_mask = 0 < (batch_of_positions < (self.env_len - 1))
         # The "stop" action is last and always allowed, so we append a 1 at the end)
         stop_column = np.ones((batch_size, 1))
         return np.append(action_mask, stop_column, axis=1)
@@ -181,7 +181,7 @@ class GFNAgent():
 
     def back_sample_trajectory(self, position):
         """Follow current backward policy from a position back to the origin.
-        Returns them in in "forward order" such that origin is first.
+        Returns them in "forward order" such that origin is first.
         :param position: (nd.array) Coordinate in the environment
         :return: (tuple of nd.array) (positions, actions)
         """
