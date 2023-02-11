@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from matplotlib import pyplot as plt
 
+np.random.seed(42)
 import tensorflow as tf
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, Dropout, Input, Flatten
@@ -170,7 +171,7 @@ class GFNAgent():
         :return: (nd.array) Masked and re-normalized probabilities
         """
         assert isinstance(position, np.ndarray)
-        masked_actions = position * backward_probs.numpy()
+        masked_actions = (position) * backward_probs.numpy()
         # Normalize masked probabilities so that they again sum to 1
         normalized_actions = masked_actions / np.sum(masked_actions, axis=1, keepdims=True)
         return normalized_actions
@@ -525,4 +526,7 @@ class GFNAgent():
 
 if __name__ == '__main__':
     agent = GFNAgent()
-    agent.sample_trajectories()
+    agent.sample(200)
+    agent.train()
+    agent.plot_policy_2d()
+    print(agent.compare_env_to_model_policy())

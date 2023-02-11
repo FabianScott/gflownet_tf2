@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+import matplotlib.pyplot as plt
 import tensorflow_probability as tfp
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, Dropout, Input, Flatten
@@ -12,6 +13,10 @@ tfd = tfp.distributions
 # HUGE ASSUMPTION IN THIS CODE:
 # We start in a corner and can reach all states by going
 # only in one direction on each axis
+
+# The functions are grouped in sections based loosely on
+# size and importance
+
 class GFlowNet:
     def __init__(self,
                  env,
@@ -28,7 +33,7 @@ class GFlowNet:
         self.dim = env.dim
         self.n_layers = n_layers
         self.n_hidden = n_hidden
-        self.gamma = gamma  # weighting of random sampling
+        self.gamma = gamma  # weighting of random sampling if applied
         self.epochs = epochs
         self.lr = lr
         self.max_trajectory_length = self.dim * self.env.size
@@ -43,6 +48,8 @@ class GFlowNet:
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
         self.get_model()
         self.data = {'positions': None, 'actions': None, 'rewards': None}
+
+    # The following functions are the main functions for the GFlowNet:
 
     def get_model(self):
         # GO BACK AND REVIEW
@@ -60,11 +67,36 @@ class GFlowNet:
         self.model = Model(input_, [fpm, bpm])
         self.unif = tfd.Uniform(low=[0] * (self.dim + 1), high=[1] * (self.dim + 1))
 
-    def sample_trajectories(self, batch_size=5, explore=False):
+    def train(self, weight_path='data/weights', batch_size=10, verbose=True):
+        loss_results = []
+        min_loss = np.inf
+        self.sample()
+        for epoch in range(self.epochs):
+            epoch_loss_list = []
+            for batch in self.train_sampler(batch_size):
+                loss_values, gradients = self.grad(batch)
+                self.optimizer.apply_gradients(
+                    zip(gradients, self.model.trainable_variables + [self.z0])
+                )
+                losses_batch = [sample for sample in loss_values]
+                epoch_loss_list.append(np.mean(losses_batch))
+            epoch_loss = np.mean(epoch_loss_list)
+            if epoch_loss < min_loss:
+                self.model.save_weights(weight_path)
+                min_loss = epoch_loss
+            loss_results.append(epoch_loss)
+            if verbose and epoch % 9 == 0:
+                print(f'Epoch: {epoch} Loss: {epoch_loss}')
+
+        self.model.load_weights(weight_path)
+        return loss_results
+
+    # The following functions are longer helpers:
+
+    def sample_trajectories_in_batches(self, batch_size=5, explore=False):
         """
         Using the current policy, sample (batch_size) trajectories from
         the environment, starting in the origin.
-
         """
         continue_sampling = np.ones(batch_size, dtype=bool)
         # dtype must be int for use in indexing reward_space
@@ -113,6 +145,10 @@ class GFlowNet:
         return np.stack(trajectories, axis=1), np.stack(one_hot_actions, axis=1), batch_rewards
 
     def sample_trajectories_bakwards(self, position, from_grad=False):
+        """
+        The reverse of the forward sampling, but only for a single
+        startion position
+        """
         position_one_hot = tf.one_hot(np.expand_dims(position, 0), self.env.size, axis=-1)
         positions = [position_one_hot]
         # Start by storing the terminating action
@@ -144,40 +180,51 @@ class GFlowNet:
         return np.flip(np.concatenate(positions, axis=0), axis=0), \
             np.flip(np.stack(actions, axis=0), axis=0)
 
-    def sample(self, n_samples=None, explore=True, only_unique=True):
+    def sample(self, n_samples=None, explore=True, evaluate=True):
+        """
+        Using the current policy and potentially exploration, append
+        n_samples into the data dictionary. If specified, use the
+        eval_data dictionary instead, where existing data will be overriden.
+        """
         n_samples = self.n_samples if n_samples is None else n_samples
-        trajectories, actions, rewards = self.sample_trajectories(n_samples, explore)
+        trajectories, actions, rewards = self.sample_trajectories_in_batches(n_samples, explore)
         # extract only the final positions, since we have the actions to get the
         # entire trajectory that is all we need
         positions = np.stack([self.get_last_position(trajectory) for trajectory in trajectories], axis=0)
 
-        if self.data['positions'] is None:
-            self.data['trajectories'] = trajectories
-            self.data['positions'] = positions
-            self.data['actions'] = actions
-            self.data['rewards'] = rewards
-        else:
-            # (batch, len_trajectory, env dimensions)
-            self.data['trajectories'] = np.append(self.data['trajectories'], trajectories, axis=0)
-            # (batch, env dimensions)
-            self.data['positions'] = np.append(self.data['positions'], positions, axis=0)
-            # (batch, len_trajectory-1, action dimensions)
-            self.data['actions'] = np.append(self.data['actions'], actions, axis=0)
-            # (batch,)
-            self.data['rewards'] = np.append(self.data['rewards'], rewards, axis=0)
-
-        if only_unique:
+        if not evaluate:
+            if self.data['positions'] is not None:
+                # (batch, len_trajectory, env dimensions)
+                self.data['trajectories'] = np.append(self.data['trajectories'], trajectories, axis=0)
+                # (batch, env dimensions)
+                self.data['positions'] = np.append(self.data['positions'], positions, axis=0)
+                # (batch, len_trajectory-1, action dimensions)
+                self.data['actions'] = np.append(self.data['actions'], actions, axis=0)
+                # (batch,)
+                self.data['rewards'] = np.append(self.data['rewards'], rewards, axis=0)
+            else:
+                self.data['trajectories'] = trajectories
+                self.data['positions'] = positions
+                self.data['actions'] = actions
+                self.data['rewards'] = rewards
+            # Ensure that training data do not contain duplicates
+            # (simply to make training faster)
             u_positions, u_indices = np.unique(positions, axis=0, return_index=True)
             self.data['trajectories'] = self.data['trajectories'][u_indices]
             self.data['positions'] = u_positions
             self.data['actions'] = self.data['actions'][u_indices]
             self.data['rewards'] = self.data['rewards'][u_indices]
+        else:
+            # For evaluating frequencies we have to keep duplicates
+            self.eval_data['trajectories'] = trajectories
+            self.eval_data['positions'] = positions
+            self.eval_data['actions'] = actions
+            self.eval_data['rewards'] = rewards
 
     def train_sampler(self, batch_size=10):
         """
         Returns a list of tuples (final_position, reward)
         for all data in self.data in a randomised order
-
         """
         out = []
         data_len = self.data['rewards'].shape[0]
@@ -192,6 +239,10 @@ class GFlowNet:
         return out
 
     def trajectory_balance_loss(self, batch, from_grad=False):
+        """
+        Calculate the trajectory balance loss as defined in the paper.
+        Returns the loss for each element in the batch in a list.
+        """
 
         positions, rewards = batch
         losses = []
@@ -228,31 +279,7 @@ class GFlowNet:
 
         return losses
 
-    def train(self, weight_path='data/weights', batch_size=10, verbose=True):
-        loss_results = []
-        min_loss = np.inf
-        self.sample()
-        for epoch in range(self.epochs):
-            epoch_loss_list = []
-            for batch in self.train_sampler(batch_size):
-                loss_values, gradients = self.grad(batch)
-                self.optimizer.apply_gradients(
-                    zip(gradients, self.model.trainable_variables + [self.z0])
-                )
-                losses_batch = [sample for sample in loss_values]
-                epoch_loss_list.append(np.mean(losses_batch))
-            epoch_loss = np.mean(epoch_loss_list)
-            if epoch_loss < min_loss:
-                self.model.save_weights(weight_path)
-                min_loss = epoch_loss
-            loss_results.append(epoch_loss)
-            if verbose and epoch % 9 == 0:
-                print(f'Epoch: {epoch} Loss: {epoch_loss}')
-
-        self.model.load_weights(weight_path)
-        return loss_results
-
-    # The following are helper functions
+    # The following functions are short helpers
 
     def mask_forward_actions(self, position_batch):
         """
@@ -277,6 +304,14 @@ class GFlowNet:
         return mask_prob / np.sum(mask_prob, axis=1, keepdims=True)
 
     def mask_and_norm_backward_actions(self, position, backward_probs):
+        """
+        For the backward actions, since a position of 0 on any
+        dimension will lead to an out-of-bounds action, thus
+        the probability of choosing this action must be set to 0.
+
+        For now, use the code as found in the original repo, but
+        probably insert (position > 0)
+        """
         masked_actions = position * backward_probs.numpy()
         return masked_actions / np.sum(masked_actions, axis=1, keepdims=True)
 
@@ -301,6 +336,111 @@ class GFlowNet:
         """Refresh self.eval_data dictionary."""
         self.eval_data = {'positions': None, 'actions': None, 'rewards': None}
 
+    # This section contains post training functions:
+    # The follow plotting functions are limited to the first 2 dimensions
+    #  and are directly copied from the original repository!!
+    def plot_sampled_data_2d(self):
+        """Plot positions and associated rewards found in `self.data`.
+        :return: (None) Matplotlib figure
+        """
+        assert self.dim == 2
+        fig, ax = plt.subplots(nrows=1, figsize=(5, 5))
+        all_positions = self.data['positions']
+        ax.scatter(
+            all_positions[:, 1],
+            all_positions[:, 0],
+            marker='x',
+            color='red',
+            s=self.data['rewards'] * 50
+        )
+        plt.show()
+
+    def plot_policy_2d(self):
+        """Plot forward and backward policies.
+        :return: (None) Matplotlib figure
+        """
+        # Generate grid coordinates
+        top_slice = tuple([slice(0, self.env.length), slice(0, self.env.length)] + [0] * (self.dim - 2))
+        coordinates = []
+        for coord, i in np.ndenumerate(self.env.reward[top_slice]):
+            coordinates.append(coord)
+        coords = np.array(coordinates)
+        one_hot_position = tf.one_hot(coords, self.env_len, axis=-1)
+        # Use forward policy to get probabilities over actions
+        frwd_logits, back_logits = self.model.predict(one_hot_position)
+        model_fwrd_prob = tf.math.exp(frwd_logits).numpy()
+        model_back_prob = tf.math.exp(back_logits).numpy()
+        fig, axes = plt.subplots(ncols=2, figsize=(10, 5))
+        # Arrows for forward probabilities
+        for i in range(coords.shape[0]):
+            for act in [0, 1]:
+                x_change = 0
+                y_change = model_fwrd_prob[i, act]
+                if act == 1:
+                    x_change = model_fwrd_prob[i, act]
+                    y_change = 0
+                axes[0].arrow(
+                    coords[i, 1],
+                    coords[i, 0],
+                    x_change,
+                    y_change,
+                    width=0.04,
+                    head_width=0.1,
+                    fc='black',
+                    ec='black'
+                )
+        # Arrows for backward probabilities
+        for i in range(coords.shape[0]):
+            for act in [0, 1]:
+                x_change = 0
+                y_change = -model_back_prob[i, act]
+                if act == 1:
+                    x_change = -model_back_prob[i, act]
+                    y_change = 0
+                axes[1].arrow(
+                    coords[i, 1],
+                    coords[i, 0],
+                    x_change,
+                    y_change,
+                    width=0.04,
+                    head_width=0.1,
+                    fc='black',
+                    ec='black'
+                )
+        # Stop probabilities marked with red octagons (forward only)
+        axes[0].scatter(
+            coords[:, 1],
+            coords[:, 0],
+            s=model_fwrd_prob[:, 2] * 200,
+            marker='8',
+            color='red'
+        )
+        # Titles
+        axes[0].set_title('Forward policy')
+        axes[1].set_title('Backward policy')
+        plt.show()
+
+    def evaluate_policy(self, sample_size=2000, plot=True):
+        """
+        Get the L1 (absolute) error across the entire space
+        between the actual reward in the environment and the
+        empirical distribution of the GFlowNet. This is found
+        by counting the proportion of all positions that end
+        in each position using the current policy.
+        """
+        self.clear_eval_data()
+        self.sample(sample_size, explore=False, evaluate=False)
+        agent_prob = np.zeros(self.env.prob_space.shape)
+        for last_position in range(self.eval_data['positions']):
+            agent_prob[tuple(last_position)] += 1
+        agent_prob = agent_prob / np.sum(agent_prob)
+
+        if plot:
+            top_slice = tuple([slice(0, self.env_len), slice(0, self.env_len)] + [0] * (self.dim - 2))
+            plt.imshow(agent_prob[top_slice], origin='lower')
+
+        return np.sum(np.abs(agent_prob - self.env.prob_space))
+
 
 if __name__ == '__main__':
     from cube_env import CubeEnv
@@ -308,3 +448,4 @@ if __name__ == '__main__':
     env = CubeEnv()
     agent = GFlowNet(env)
     agent.train()
+    agent.plot_policy_2d()

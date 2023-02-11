@@ -14,6 +14,7 @@ class CubeEnv:
         self.reward_space = np.ones([self.size] * self.dim) * self.r[0]
         for coord, i in np.ndenumerate(self.reward_space):
             self.reward_space[coord] = self.calculate_reward(coord)
+        self.prob_space = self.reward_space / np.sum(self.reward_space)
 
     def calculate_reward(self, coord):
         reward = np.ones(2)
