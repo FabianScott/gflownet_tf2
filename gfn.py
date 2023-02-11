@@ -8,6 +8,7 @@ import tensorflow as tf
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, Dropout, Input, Flatten
 import tensorflow_probability as tfp
+
 tfd = tfp.distributions
 
 from env import RewardEnvironment
@@ -18,6 +19,7 @@ class GFNAgent():
     https://arxiv.org/abs/2106.04399 and
     https://arxiv.org/abs/2201.13259
     """
+
     def __init__(self,
                  env_dim=2,
                  env_len=8,
@@ -27,7 +29,7 @@ class GFNAgent():
                  gamma=0.5,
                  epochs=100,
                  lr=0.005,
-                ):
+                 ):
         """Initialize GFlowNet agent.
         :param env_dim: (int) Number of dimensions in the reward environment
         :param env_len: (int) Length of each dimension in the environment
@@ -59,17 +61,16 @@ class GFNAgent():
             decay_rate=0.8
         )
         self.optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
-        self.data = {'positions':None, 'actions':None, 'rewards':None}
+        self.data = {'positions': None, 'actions': None, 'rewards': None}
         self.clear_eval_data()
         self.get_model()
-
 
     def get_model(self):
         """Initialize neural network using TensorFlow2 functional API.
         :return: (None)
         """
         # Accept one-hot encoded states as input
-        input_ = Input(shape=(self.dim,self.env_len), name='input')
+        input_ = Input(shape=(self.dim, self.env_len), name='input')
         flatten_1 = Flatten()(input_)
         dense_1 = Dense(
             units=self.n_hidden,
@@ -92,8 +93,7 @@ class GFNAgent():
         self.model = Model(input_, [fpm, bpm])
         # We'll be using the uniform distribution to add
         # more exploration to our forward policy
-        self.unif = tfd.Uniform(low=[0]*self.action_space, high=[1]*self.action_space)
-
+        self.unif = tfd.Uniform(low=[0] * self.action_space, high=[1] * self.action_space)
 
     def mask_forward_actions(self, batch_of_positions):
         """Build boolean mask with zeros over coordinates at the edge of environment.
@@ -108,7 +108,6 @@ class GFNAgent():
         stop_column = np.ones((batch_size, 1))
         return np.append(action_mask, stop_column, axis=1)
 
-
     def mask_and_norm_forward_actions(self, batch_positions, batch_forward_probs):
         """Remove actions that would move outside the environment, and re-normalize
         probabilities so that they sum to one.
@@ -122,7 +121,6 @@ class GFNAgent():
         normalized_actions = masked_actions / np.sum(masked_actions, axis=1, keepdims=True)
         return normalized_actions
 
-
     def sample_trajectories(self, batch_size=3, explore=False):
         """Sample `batch_size` trajectories using the current policy.
         :param batch_size: (int) Number of trajectories to sample
@@ -131,12 +129,12 @@ class GFNAgent():
         :return: (tuple of nd.array) (trajectories, one_hot_actions, rewards)
         """
         # Start at the origin
-        still_sampling = [True]*batch_size
+        still_sampling = [True] * batch_size
         positions = np.zeros((batch_size, self.dim), dtype='int32')
         trajectories = [positions.copy()]
         one_hot_actions = []
         batch_rewards = np.zeros((batch_size,))
-        for step in range(self.max_trajectory_len-1):
+        for step in range(self.max_trajectory_len - 1):
             # Convert positions to one-hot encoding
             one_hot_position = tf.one_hot(positions, self.env_len, axis=-1)
             # Use forward policy to get log probabilities over actions
@@ -145,7 +143,7 @@ class GFNAgent():
             if explore:
                 # Mix with uniform distribution to encourage exploration
                 unif = self.unif.sample(sample_shape=model_fwrd_probs.shape[0])
-                model_fwrd_probs = self.gamma*unif + (1-self.gamma)*model_fwrd_probs
+                model_fwrd_probs = self.gamma * unif + (1 - self.gamma) * model_fwrd_probs
             # Don't select impossible actions (like moving out of the environment)
             normalized_actions = self.mask_and_norm_forward_actions(positions, model_fwrd_probs)
             # Select actions randomly, proportionally to input probabilities
@@ -155,16 +153,15 @@ class GFNAgent():
             for i, act_i in enumerate(actions):
                 if act_i == (self.action_space - 1) and still_sampling[i]:
                     still_sampling[i] = False
-                    batch_rewards[i] = self.env.get_reward(positions[i,:])
+                    batch_rewards[i] = self.env.get_reward(positions[i, :])
                 elif not still_sampling[i]:
-                    positions[i,:] = -1
-                    actions_one_hot[i,:] = 0
+                    positions[i, :] = -1
+                    actions_one_hot[i, :] = 0
                 else:
                     positions[i, act_i] += 1
             trajectories.append(positions.copy())
             one_hot_actions.append(actions_one_hot)
         return np.stack(trajectories, axis=1), np.stack(one_hot_actions, axis=1), batch_rewards
-
 
     def mask_and_norm_backward_actions(self, position, backward_probs):
         """Set probabilities to zero where action to lead out of the environment.
@@ -178,7 +175,6 @@ class GFNAgent():
         normalized_actions = masked_actions / np.sum(masked_actions, axis=1, keepdims=True)
         return normalized_actions
 
-
     def back_sample_trajectory(self, position):
         """Follow current backward policy from a position back to the origin.
         Returns them in "forward order" such that origin is first.
@@ -189,9 +185,9 @@ class GFNAgent():
         assert isinstance(position, np.ndarray)
         one_hot_position = tf.one_hot(np.expand_dims(position, 0), self.env_len, axis=-1)
         positions = [one_hot_position]
-        actions = [tf.one_hot(self.action_space-1, self.action_space).numpy()]
+        actions = [tf.one_hot(self.action_space - 1, self.action_space).numpy()]
         still_tracing = True
-        if np.all(position == [0,0]):
+        if np.all(position == [0, 0]):
             still_tracing = False
         cur_pos = position.copy()
         while still_tracing:
@@ -208,7 +204,7 @@ class GFNAgent():
             # Convert position to one-hot encoding
             one_hot_position = tf.one_hot(np.expand_dims(cur_pos, 0), self.env_len, axis=-1)
             # Stop tracing if at origin
-            if np.all(cur_pos == [0,0]):
+            if np.all(cur_pos == [0, 0]):
                 still_tracing = False
 
             positions.append(one_hot_position.numpy().copy())
@@ -218,7 +214,6 @@ class GFNAgent():
             np.flip(np.stack(actions, axis=0), axis=0)
         )
 
-
     def get_last_position(self, trajectory):
         """Identify the termination coordinates for a trajectory.
         :param trajectory: (nd.array) Array of coordinates/positions
@@ -226,10 +221,9 @@ class GFNAgent():
         """
         assert len(trajectory.shape) == 2
         mask = trajectory != -1
-        traj_no_pad = trajectory[mask[:,0],...]
-        last_position = traj_no_pad[-1,:]
+        traj_no_pad = trajectory[mask[:, 0], ...]
+        last_position = traj_no_pad[-1, :]
         return last_position
-
 
     def sample(self, num_to_sample, explore=True, evaluate=False):
         """Sample trajectories using the current policy and save to
@@ -276,11 +270,9 @@ class GFNAgent():
             self.eval_data['actions'] = actions
             self.eval_data['rewards'] = rewards
 
-
     def clear_eval_data(self):
         """Refresh self.eval_data dictionary."""
-        self.eval_data = {'positions':None, 'actions':None, 'rewards':None}
-
+        self.eval_data = {'positions': None, 'actions': None, 'rewards': None}
 
     def train_gen(self, batch_size=10):
         """Generator object that feeds shuffled samples from `self.data` to training loop.
@@ -292,11 +284,10 @@ class GFNAgent():
         shuffle = np.random.choice(data_len, size=data_len, replace=False)
         for i in range(iterations):
             # Pick a random batch of training data
-            samples = shuffle[i*batch_size:(i+1)*batch_size]
+            samples = shuffle[i * batch_size:(i + 1) * batch_size]
             sample_positions = self.data['positions'][samples]
             sample_rewards = tf.convert_to_tensor(self.data['rewards'][samples], dtype='float32')
             yield (sample_positions, sample_rewards)
-
 
     def trajectory_balance_loss(self, batch):
         """Calculate Trajectory Balance Loss function as described in
@@ -313,7 +304,7 @@ class GFNAgent():
             # Sample a trajectory for the given position using backward policy
             trajectory, back_actions = self.back_sample_trajectory(position)
             # Generate policy predictions for each position in trajectory
-            tf_traj = tf.convert_to_tensor(trajectory[:,...], dtype='float32')
+            tf_traj = tf.convert_to_tensor(trajectory[:, ...], dtype='float32')
             forward_policy, back_policy = self.model(tf_traj)
             # Use "back_actions" to select corresponding forward probabilities
             forward_probs = tf.reduce_sum(
@@ -322,7 +313,7 @@ class GFNAgent():
             )
             # Get backward probabilities for the sampled trajectory (ignore origin)
             backward_probs = tf.reduce_sum(
-                tf.multiply(back_policy[1:,:], back_actions[:-1,:self.dim]),
+                tf.multiply(back_policy[1:, :], back_actions[:-1, :self.dim]),
                 axis=1
             )
             # Add a constant backward probability for transitioning from the termination state
@@ -338,7 +329,7 @@ class GFNAgent():
             # Penalize any probabilities that extend beyond the environment
             # This part is not from the publication
             fwrd_edges = tf.cast(
-                np.argmax(trajectory, axis=2) == (self.env_len-1),
+                np.argmax(trajectory, axis=2) == (self.env_len - 1),
                 dtype='float32'
             )
             back_edges = tf.cast(
@@ -346,19 +337,18 @@ class GFNAgent():
                 dtype='float32'
             )
             fedge_probs = tf.math.multiply(
-                tf.math.exp(forward_policy[:,:self.dim]),
+                tf.math.exp(forward_policy[:, :self.dim]),
                 fwrd_edges
             )
             bedge_probs = tf.math.multiply(
-                tf.math.exp(back_policy[:,:self.dim]),
+                tf.math.exp(back_policy[:, :self.dim]),
                 back_edges
-            )[1:,:] # Ignore backward policy for the origin
+            )[1:, :]  # Ignore backward policy for the origin
             fedge_loss = tf.reduce_sum(fedge_probs)
             bedge_loss = tf.reduce_sum(bedge_probs)
             combined_loss = tf.math.add(tb_loss, tf.math.add(fedge_loss, bedge_loss))
             losses.append(combined_loss)
         return losses
-
 
     def grad(self, batch):
         """Calculate gradients based on loss function values. Notice the z0 value is
@@ -371,7 +361,6 @@ class GFNAgent():
             grads = tape.gradient(loss, self.model.trainable_variables + [self.z0])
         return loss, grads
 
-
     def train(self, verbose=True):
         """Run a training loop of `length self.epochs`.
         At the end of each epoch, save weights if loss is better than any previous epoch.
@@ -382,7 +371,7 @@ class GFNAgent():
         if verbose: print('Start training...')
         # Keep track of loss during training
         train_loss_results = []
-        best_epoch_loss = 10**10
+        best_epoch_loss = 10 ** 10
         model_weights_path = './checkpoints/gfn_checkpoint'
         for epoch in range(self.epochs):
             epoch_loss_avg = tf.keras.metrics.Mean()
@@ -407,7 +396,6 @@ class GFNAgent():
         # Load best weights
         self.model.load_weights(model_weights_path)
 
-
     def compare_env_to_model_policy(self, sample_size=2000, plot=True):
         """Compare probability distribution over generated trajectories
         (estimated empirically) to reward distribution in environment.
@@ -425,17 +413,16 @@ class GFNAgent():
         # Count number of trajectories that end in each position,
         # and normalize by the total
         for i_pos in range(self.eval_data['positions'].shape[0]):
-            last_position = self.eval_data['positions'][i_pos,...]
+            last_position = self.eval_data['positions'][i_pos, ...]
             agent_prob[tuple(last_position)] += 1
         agent_prob = agent_prob / np.sum(agent_prob)
 
         if plot:
-            top_slice = tuple([slice(0,self.env_len),slice(0,self.env_len)] + [0]*(self.dim - 2))
+            top_slice = tuple([slice(0, self.env_len), slice(0, self.env_len)] + [0] * (self.dim - 2))
             plt.imshow(agent_prob[top_slice], origin='lower');
-        
+
         l1_error = np.sum(np.abs(agent_prob - env_prob))
         return l1_error
-
 
     def count_modes(self):
         """Count the number of modes sampled in `self.data`. Modes being
@@ -448,19 +435,18 @@ class GFNAgent():
         # Count the number of modes (positions of maximum reward) sampled in the data set
         modes_list = []
         for i_pos in range(self.data['positions'].shape[0]):
-            last_position = self.data['positions'][i_pos,...]
+            last_position = self.data['positions'][i_pos, ...]
             all_positions_list.append(str(last_position))
             if self.env.get_reward(last_position) == self.env.reward.max():
                 modes_list.append(str(last_position))
         return len(set(modes_list)), len(set(all_positions_list))
-
 
     def plot_policy_2d(self):
         """Plot forward and backward policies.
         :return: (None) Matplotlib figure
         """
         # Generate grid coordinates
-        top_slice = tuple([slice(0,self.env.length),slice(0,self.env.length)] + [0]*(self.dim - 2))
+        top_slice = tuple([slice(0, self.env.length), slice(0, self.env.length)] + [0] * (self.dim - 2))
         coordinates = []
         for coord, i in np.ndenumerate(self.env.reward[top_slice]):
             coordinates.append(coord)
@@ -470,18 +456,18 @@ class GFNAgent():
         frwd_logits, back_logits = self.model.predict(one_hot_position)
         model_fwrd_prob = tf.math.exp(frwd_logits).numpy()
         model_back_prob = tf.math.exp(back_logits).numpy()
-        fig, axes = plt.subplots(ncols=2, figsize=(10,5))
+        fig, axes = plt.subplots(ncols=2, figsize=(10, 5))
         # Arrows for forward probabilities
         for i in range(coords.shape[0]):
-            for act in [0,1]:
+            for act in [0, 1]:
                 x_change = 0
-                y_change = model_fwrd_prob[i,act]
+                y_change = model_fwrd_prob[i, act]
                 if act == 1:
-                    x_change = model_fwrd_prob[i,act]
+                    x_change = model_fwrd_prob[i, act]
                     y_change = 0
                 axes[0].arrow(
-                    coords[i,1],
-                    coords[i,0],
+                    coords[i, 1],
+                    coords[i, 0],
                     x_change,
                     y_change,
                     width=0.04,
@@ -491,15 +477,15 @@ class GFNAgent():
                 )
         # Arrows for backward probabilities
         for i in range(coords.shape[0]):
-            for act in [0,1]:
+            for act in [0, 1]:
                 x_change = 0
-                y_change = -model_back_prob[i,act]
+                y_change = -model_back_prob[i, act]
                 if act == 1:
-                    x_change = -model_back_prob[i,act]
+                    x_change = -model_back_prob[i, act]
                     y_change = 0
                 axes[1].arrow(
-                    coords[i,1],
-                    coords[i,0],
+                    coords[i, 1],
+                    coords[i, 0],
                     x_change,
                     y_change,
                     width=0.04,
@@ -509,9 +495,9 @@ class GFNAgent():
                 )
         # Stop probabilities marked with red octagons (forward only)
         axes[0].scatter(
-            coords[:,1],
-            coords[:,0],
-            s=model_fwrd_prob[:,2]*200,
+            coords[:, 1],
+            coords[:, 0],
+            s=model_fwrd_prob[:, 2] * 200,
             marker='8',
             color='red'
         )
@@ -520,19 +506,23 @@ class GFNAgent():
         axes[1].set_title('Backward policy')
         plt.show()
 
-
     def plot_sampled_data_2d(self):
         """Plot positions and associated rewards found in `self.data`.
         :return: (None) Matplotlib figure
         """
         assert self.dim == 2
-        fig, ax = plt.subplots(nrows=1, figsize=(5,5))
+        fig, ax = plt.subplots(nrows=1, figsize=(5, 5))
         all_positions = self.data['positions']
         ax.scatter(
-            all_positions[:,1],
-            all_positions[:,0],
+            all_positions[:, 1],
+            all_positions[:, 0],
             marker='x',
             color='red',
-            s=self.data['rewards']*50
+            s=self.data['rewards'] * 50
         )
         plt.show()
+
+
+if __name__ == '__main__':
+    agent = GFNAgent()
+    agent.sample_trajectories()
