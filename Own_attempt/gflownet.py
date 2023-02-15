@@ -180,7 +180,7 @@ class GFlowNet:
         return np.flip(np.concatenate(positions, axis=0), axis=0), \
             np.flip(np.stack(actions, axis=0), axis=0)
 
-    def sample(self, n_samples=None, explore=True, evaluate=True):
+    def sample(self, n_samples=None, explore=True, evaluate=False):
         """
         Using the current policy and potentially exploration, append
         n_samples into the data dictionary. If specified, use the
@@ -360,12 +360,12 @@ class GFlowNet:
         :return: (None) Matplotlib figure
         """
         # Generate grid coordinates
-        top_slice = tuple([slice(0, self.env.length), slice(0, self.env.length)] + [0] * (self.dim - 2))
+        top_slice = tuple([slice(0, self.env.size), slice(0, self.env.size)] + [0] * (self.dim - 2))
         coordinates = []
-        for coord, i in np.ndenumerate(self.env.reward[top_slice]):
+        for coord, i in np.ndenumerate(self.env.reward_space[top_slice]):
             coordinates.append(coord)
         coords = np.array(coordinates)
-        one_hot_position = tf.one_hot(coords, self.env_len, axis=-1)
+        one_hot_position = tf.one_hot(coords, self.env.size, axis=-1)
         # Use forward policy to get probabilities over actions
         frwd_logits, back_logits = self.model.predict(one_hot_position)
         model_fwrd_prob = tf.math.exp(frwd_logits).numpy()
@@ -429,7 +429,7 @@ class GFlowNet:
         in each position using the current policy.
         """
         self.clear_eval_data()
-        self.sample(sample_size, explore=False, evaluate=False)
+        self.sample(sample_size, explore=False, evaluate=True)
         agent_prob = np.zeros(self.env.prob_space.shape)
         for last_position in range(self.eval_data['positions']):
             agent_prob[tuple(last_position)] += 1
@@ -445,7 +445,7 @@ class GFlowNet:
 if __name__ == '__main__':
     from cube_env import CubeEnv
 
-    env = CubeEnv()
+    env = CubeEnv(size=20)
     agent = GFlowNet(env)
     agent.train()
     agent.plot_policy_2d()
