@@ -445,7 +445,7 @@ class GFlowNet:
 if __name__ == '__main__':
     from cube_env import CubeEnv
 
-    env = CubeEnv(size=20)
+    env = CubeEnv(size=8)
     agent = GFlowNet(env)
-    agent.train()
+    agent.train(epochs=20)
     agent.plot_policy_2d()
