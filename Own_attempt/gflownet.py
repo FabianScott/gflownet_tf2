@@ -67,11 +67,13 @@ class GFlowNet:
         self.model = Model(input_, [fpm, bpm])
         self.unif = tfd.Uniform(low=[0] * (self.dim + 1), high=[1] * (self.dim + 1))
 
-    def train(self, weight_path='data/weights', batch_size=10, verbose=True):
+    def train(self, epochs=None, weight_path='data/weights', batch_size=10, verbose=True):
         loss_results = []
+        if epochs is None:
+            epochs = self.epochs
         min_loss = np.inf
         self.sample()
-        for epoch in range(self.epochs):
+        for epoch in range(epochs):
             epoch_loss_list = []
             for batch in self.train_sampler(batch_size):
                 loss_values, gradients = self.grad(batch)
@@ -129,7 +131,7 @@ class GFlowNet:
             # Iterate through the sampled actions, one for each batch
             for i, action in enumerate(actions):
                 # The action not in one-hot-encoding means 'stop' and has
-                # the value self.dim, thus this is the and of the loop
+                # value self.dim
                 if action == self.dim and continue_sampling[i]:
                     continue_sampling[i] = False
                     batch_rewards[i] = self.env.get_reward(positions[i])
