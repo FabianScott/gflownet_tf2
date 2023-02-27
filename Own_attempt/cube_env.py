@@ -20,7 +20,7 @@ class CubeEnv:
         reward = np.ones(2)
         for c in coord:
             reward[0] *= int(0.25 < np.abs(c / (self.size - 1) - 0.5))
-            reward[1] *= int((0.3 < np.abs(c / (self.size - 1) - 0.5)) <= 0.4)
+            reward[1] *= int(0.3 < np.abs(c / (self.size - 1) - 0.5) <= 0.4)
         return self.r[0] + sum(reward * self.r[1:])
 
     def get_reward(self, coord):
@@ -30,12 +30,11 @@ class CubeEnv:
         """Matplotlib output of first two dimensions of reward environment.
         :return: (None) Matplotlib figure object
         """
-        print(self.size)
         top_slice = tuple([slice(0, self.size), slice(0, self.size)] + [0] * (self.dim - 2))
-        plt.imshow(self.reward_space[top_slice], origin='lower')
-        plt.show()
-        sns.heatmap(self.reward_space[top_slice])
         # plt.imshow(self.reward_space[top_slice], origin='lower')
+        # plt.show()
+        sns.heatmap(self.reward_space[top_slice])
+        plt.imshow(self.reward_space[top_slice], origin='lower')
         plt.show()
 
 

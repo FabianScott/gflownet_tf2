@@ -67,12 +67,14 @@ class GFlowNet:
         self.model = Model(input_, [fpm, bpm])
         self.unif = tfd.Uniform(low=[0] * (self.dim + 1), high=[1] * (self.dim + 1))
 
-    def train(self, epochs=None, weight_path='data/weights', batch_size=10, verbose=True):
+    def train(self, epochs=None, weight_path='data/weights', batch_size=10, verbose=True, n_samples=None):
         loss_results = []
         if epochs is None:
             epochs = self.epochs
         min_loss = np.inf
-        self.sample()
+        if n_samples is not None:
+            self.sample(n_samples=n_samples)
+
         for epoch in range(epochs):
             epoch_loss_list = []
             for batch in self.train_sampler(batch_size):
@@ -83,11 +85,13 @@ class GFlowNet:
                 losses_batch = [sample for sample in loss_values]
                 epoch_loss_list.append(np.mean(losses_batch))
             epoch_loss = np.mean(epoch_loss_list)
+
             if epoch_loss < min_loss:
                 self.model.save_weights(weight_path)
                 min_loss = epoch_loss
             loss_results.append(epoch_loss)
-            if verbose and epoch % 9 == 0:
+
+            if verbose and epoch % int(epochs/10) == 0:
                 print(f'Epoch: {epoch} Loss: {epoch_loss}')
 
         self.model.load_weights(weight_path)
@@ -228,17 +232,15 @@ class GFlowNet:
         Returns a list of tuples (final_position, reward)
         for all data in self.data in a randomised order
         """
-        out = []
         data_len = self.data['rewards'].shape[0]
         num_iterations = int(data_len // batch_size) + 1
         shuffled_indicies = np.random.choice(data_len, size=data_len, replace=False)
         for i in range(num_iterations):
             sample_indicies = shuffled_indicies[i * batch_size:(i + 1) * batch_size]
-            out.append((
+            yield (
                 self.data['positions'][sample_indicies],
                 tf.convert_to_tensor(self.data['rewards'][sample_indicies], dtype='float32')
-            ))
-        return out
+            )
 
     def trajectory_balance_loss(self, batch, from_grad=False):
         """
@@ -278,6 +280,29 @@ class GFlowNet:
             denominator = tf.math.log(reward) + sum_backward
             tb_loss = tf.math.pow(numerator - denominator, 2)
             losses.append(tb_loss)
+
+            # Penalize any probabilities that extend beyond the environment
+            # This part is not from the publication
+            fwrd_edges = tf.cast(
+                np.argmax(trajectory, axis=2) == (self.env.size - 1),
+                dtype='float32'
+            )
+            back_edges = tf.cast(
+                np.argmax(trajectory, axis=2) == 0,
+                dtype='float32'
+            )
+            fedge_probs = tf.math.multiply(
+                tf.math.exp(forward_policy[:, :self.dim]),
+                fwrd_edges
+            )
+            bedge_probs = tf.math.multiply(
+                tf.math.exp(backward_policy[:, :self.dim]),
+                back_edges
+            )[1:, :]  # Ignore backward policy for the origin
+            fedge_loss = tf.reduce_sum(fedge_probs)
+            bedge_loss = tf.reduce_sum(bedge_probs)
+            combined_loss = tf.math.add(tb_loss, tf.math.add(fedge_loss, bedge_loss))
+            losses.append(combined_loss)
 
         return losses
 
@@ -357,7 +382,7 @@ class GFlowNet:
         )
         plt.show()
 
-    def plot_policy_2d(self):
+    def plot_policy_2d(self, title_post=''):
         """Plot forward and backward policies.
         :return: (None) Matplotlib figure
         """
@@ -418,8 +443,8 @@ class GFlowNet:
             color='red'
         )
         # Titles
-        axes[0].set_title('Forward policy')
-        axes[1].set_title('Backward policy')
+        axes[0].set_title(f'Forward policy {title_post}')
+        axes[1].set_title(f'Backward policy {title_post}')
         plt.show()
 
     def evaluate_policy(self, sample_size=2000, plot=True):
@@ -443,11 +468,41 @@ class GFlowNet:
 
         return np.sum(np.abs(agent_prob - self.env.prob_space))
 
+    def compare_env_to_model_policy(self, sample_size=2000, plot=True):
+        """Compare probability distribution over generated trajectories
+        (estimated empirically) to reward distribution in environment.
+        Compare using L1 error.
+        :param sample_size: (int) Number of samples used to estimate probability of
+                            trajectories terminating in each position of environment.
+        :param plot: (bool) Plot first two dimensions of empirical distribution
+        :return: (float) L1 error
+        """
+        # Start data set from a clean, on-policy slate
+        self.clear_eval_data()
+        self.sample(sample_size, explore=False, evaluate=True)
+        env_prob = self.env.env_prob
+        agent_prob = np.zeros(env_prob.shape)
+        # Count number of trajectories that end in each position,
+        # and normalize by the total
+        for i_pos in range(self.eval_data['positions'].shape[0]):
+            last_position = self.eval_data['positions'][i_pos, ...]
+            agent_prob[tuple(last_position)] += 1
+        agent_prob = agent_prob / np.sum(agent_prob)
+
+        if plot:
+            top_slice = tuple([slice(0, self.env_len), slice(0, self.env_len)] + [0] * (self.dim - 2))
+            plt.imshow(agent_prob[top_slice], origin='lower');
+
+        l1_error = np.sum(np.abs(agent_prob - env_prob))
+        return l1_error
+
 
 if __name__ == '__main__':
     from cube_env import CubeEnv
-
-    env = CubeEnv(size=8)
-    agent = GFlowNet(env)
-    agent.train(epochs=20)
-    agent.plot_policy_2d()
+    for i in range(20, 21):
+        env = CubeEnv(dim=2, size=i)
+        agent = GFlowNet(env)
+        agent.train(epochs=50, batch_size=100, n_samples=5000)
+        agent.plot_policy_2d(title_post=str(i))
+        plt.show()
+        env.plot_reward_2d()
