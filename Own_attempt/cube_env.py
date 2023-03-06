@@ -26,16 +26,19 @@ class CubeEnv:
     def get_reward(self, coord):
         return self.reward_space[tuple(coord)]
 
-    def plot_reward_2d(self):
+    def plot_reward_2d(self, just_return=False):
         """Matplotlib output of first two dimensions of reward environment.
         :return: (None) Matplotlib figure object
         """
         top_slice = tuple([slice(0, self.size), slice(0, self.size)] + [0] * (self.dim - 2))
+        if just_return:
+            return self.reward_space[top_slice]
         # plt.imshow(self.reward_space[top_slice], origin='lower')
         # plt.show()
         sns.heatmap(self.reward_space[top_slice])
         plt.imshow(self.reward_space[top_slice], origin='lower')
         plt.show()
+
 
 
 if __name__ == '__main__':

@@ -1,4 +1,5 @@
 import numpy as np
+import seaborn as sns
 import tensorflow as tf
 import matplotlib.pyplot as plt
 import tensorflow_probability as tfp
@@ -72,8 +73,7 @@ class GFlowNet:
         if epochs is None:
             epochs = self.epochs
         min_loss = np.inf
-        if n_samples is not None:
-            self.sample(n_samples=n_samples)
+        self.sample(n_samples=n_samples)
 
         for epoch in range(epochs):
             epoch_loss_list = []
@@ -306,6 +306,10 @@ class GFlowNet:
 
         return losses
 
+    def l2_loss(self, batch):
+        positions, reward = batch
+
+
     # The following functions are short helpers
 
     def mask_forward_actions(self, position_batch):
@@ -382,7 +386,7 @@ class GFlowNet:
         )
         plt.show()
 
-    def plot_policy_2d(self, title_post=''):
+    def plot_policy_2d(self, title_post='', backward=False):
         """Plot forward and backward policies.
         :return: (None) Matplotlib figure
         """
@@ -417,23 +421,29 @@ class GFlowNet:
                     ec='black'
                 )
         # Arrows for backward probabilities
-        for i in range(coords.shape[0]):
-            for act in [0, 1]:
-                x_change = 0
-                y_change = -model_back_prob[i, act]
-                if act == 1:
-                    x_change = -model_back_prob[i, act]
-                    y_change = 0
-                axes[1].arrow(
-                    coords[i, 1],
-                    coords[i, 0],
-                    x_change,
-                    y_change,
-                    width=0.04,
-                    head_width=0.1,
-                    fc='black',
-                    ec='black'
-                )
+        if backward:
+            axes[1].set_title(f'Backward policy {title_post}')
+            for i in range(coords.shape[0]):
+                for act in [0, 1]:
+                    x_change = 0
+                    y_change = -model_back_prob[i, act]
+                    if act == 1:
+                        x_change = -model_back_prob[i, act]
+                        y_change = 0
+                    axes[1].arrow(
+                        coords[i, 1],
+                        coords[i, 0],
+                        x_change,
+                        y_change,
+                        width=0.04,
+                        head_width=0.1,
+                        fc='black',
+                        ec='black'
+                    )
+        else:
+            sns.heatmap(self.env.reward_space[top_slice], ax=axes[1])
+            axes[1].set_title(f'Environment Reward {title_post}')
+
         # Stop probabilities marked with red octagons (forward only)
         axes[0].scatter(
             coords[:, 1],
@@ -444,7 +454,6 @@ class GFlowNet:
         )
         # Titles
         axes[0].set_title(f'Forward policy {title_post}')
-        axes[1].set_title(f'Backward policy {title_post}')
         plt.show()
 
     def evaluate_policy(self, sample_size=2000, plot=True):
@@ -500,6 +509,7 @@ class GFlowNet:
 if __name__ == '__main__':
     from cube_env import CubeEnv
     for i in range(20, 21):
+        print(tf.test.is_gpu_available())
         env = CubeEnv(dim=2, size=i)
         agent = GFlowNet(env)
         agent.train(epochs=50, batch_size=100, n_samples=5000)
